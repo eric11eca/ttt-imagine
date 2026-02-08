@@ -1,11 +1,11 @@
 export TOKENIZERS_PARALLELISM=false
 
 CKPT="checkpoints/wan_test/Wan2.1-T2V-14B"
-CONFIG='configs/008_wanvideo/wan2_1_t2v_14B_lora.yaml'        
+CONFIG='configs/008_wanvideo/wan2_1_t2v_14B_lora.yaml'
 
-RESROOT="results/train"                                             
-EXPNAME="train_wanvideo_t2v_lora"                                     
-CURRENT_TIME=$(date +%Y%m%d%H%M%S)                                  
+RESROOT="results/train"
+EXPNAME="train_wanvideo_t2v_lora"
+CURRENT_TIME=$(date +%Y%m%d%H%M%S)
 
 
 python scripts/train_new.py -t \

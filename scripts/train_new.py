@@ -106,7 +106,7 @@ if __name__ == "__main__":
     local_rank, global_rank, num_rank = get_dist_info()
     parser = get_parser()
     config = prepare_train_args(parser)
-    logger = setup_logger(config)   
+    logger = setup_logger(config)
 
     ## load flow
     logger.info("@lightning version: %s [>=2.0 required]" % pl.__version__)

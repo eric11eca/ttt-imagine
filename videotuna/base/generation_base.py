@@ -105,27 +105,27 @@ class GenerationBase(TrainBase, InferenceBase):
         self.denoiser_config = denoiser_config
         self.scheduler_config = scheduler_config
         self.lora_config = lora_config
-        
+
         # set trainable components
         # be aware: loaded weight will overide requrie_grad attribute etc
         # make sure call it again after loading weight
         self.set_trainable_components(trainable_components)
-        
+
     def instantiate_scheduler(self, config: Dict[str, Any]):
         if config is not None:
             logger.info("creating scheduler")
             self.diffusion_scheduler = self.scheduler = instantiate_from_config(config)
             self.components.append(Component.SCHEDULER.value)
-        
+
     def instantiate_lora(self, config: Dict[str, Any]):
         self.use_lora = False
         if config is not None:
             logger.info("creating lora")
-            transformer_adapter_config = instantiate_from_config(config)   
+            transformer_adapter_config = instantiate_from_config(config)
             self.denoiser = get_peft_model(self.denoiser, transformer_adapter_config)
             self.lora_params = set([name for name, param in self.denoiser.named_parameters() if param.requires_grad and 'lora' in name])
             self.denoiser.requires_grad_(False)
-            self.denosier = self.denoiser.eval()
+            self.denoiser = self.denoiser.eval()
             self.use_lora = True
             self.lora_path = config.get("ckpt_path")
             logger.info(f"self.use_lora: {self.use_lora} self.lora_path: {self.lora_path} self.lora_params: {self.lora_params}")
@@ -144,7 +144,7 @@ class GenerationBase(TrainBase, InferenceBase):
         self.components.append(Component.FIRST_STAGE_MODEL.value)
         self.first_stage_model_path = config.get("ckpt_path", f"{Component.FIRST_STAGE_MODEL.value}.ckpt")
         logger.info(f"self.first_stage_model_path: {self.first_stage_model_path}")
-    
+
     def instantiate_cond_stage(self, config: Dict[str, Any]):
         """
         Instantiates the conditional stage model of the generative process.
@@ -159,7 +159,7 @@ class GenerationBase(TrainBase, InferenceBase):
         self.components.append(Component.COND_STAGE_MODEL.value)
         self.cond_stage_model_path = config.get("ckpt_path", f"{Component.COND_STAGE_MODEL.value}.ckpt")
         logger.info(f"self.cond_stage_model_path: {self.cond_stage_model_path}")
-        
+
     def instantiate_cond_stage_2(self, config: Dict[str, Any]):
         """
         Instantiates the conditional stage model of the generative process.
@@ -176,7 +176,7 @@ class GenerationBase(TrainBase, InferenceBase):
             self.components.append(Component.COND_STAGE_2_MODEL.value)
             self.cond_stage_2_model_path = config.get("ckpt_path", f"{Component.COND_STAGE_2_MODEL.value}.ckpt")
             logger.info(f"self.cond_stage_2_model_path: {self.cond_stage_2_model_path}")
-    
+
     def instantiate_denoiser(self, config: Dict[str, Any]):
         """
         Instantiates the denoiser model of the generative process.
@@ -215,7 +215,7 @@ class GenerationBase(TrainBase, InferenceBase):
         if self.trainer.strategy.__class__.__name__ == 'DeepSpeedStrategy':
             from deepspeed.ops.adam import DeepSpeedCPUAdam
             optimizer = DeepSpeedCPUAdam(params, lr=lr)
-        else: 
+        else:
             optimizer = torch.optim.AdamW(params, lr=lr)
 
         ## lr scheduler
@@ -223,7 +223,7 @@ class GenerationBase(TrainBase, InferenceBase):
             logger.info("Setting up LambdaLR scheduler...")
             lr_scheduler = self.configure_lr_schedulers(optimizer)
             return [optimizer], [lr_scheduler]
-        
+
         return optimizer
 
     def configure_lr_schedulers(self, optimizer):
@@ -258,7 +258,7 @@ class GenerationBase(TrainBase, InferenceBase):
         else:
             raise NotImplementedError
         return lr_scheduler
-    
+
     def set_trainable_components(
         self,
         components: Union[str, List[str]] = [],
@@ -270,7 +270,7 @@ class GenerationBase(TrainBase, InferenceBase):
         """
         if isinstance(components, str):
             components = [components]
-        
+
         # eval all components
         for component in self.components:
             model = getattr(self, component)
@@ -286,11 +286,11 @@ class GenerationBase(TrainBase, InferenceBase):
             model = getattr(self, component)
             if model is None:
                 raise ValueError(f"Invalid component name: {component}")
-        
+
             if not isinstance(model, nn.Module):
                 logger.info(f"Skipping train component {component} since it is not module")
                 continue
-            
+
             #if denoiser lora, make sure only lora params require grad
             if component == Component.DENOISER.value and self.use_lora:
                 ## TODO how to define lora module
@@ -301,11 +301,11 @@ class GenerationBase(TrainBase, InferenceBase):
             else:
                 model.train()
                 model.requires_grad_(True)
-                
+
         print_green(f"Set the following components as trainable: {components}")
-    
-    
-    def load_first_stage(self, 
+
+
+    def load_first_stage(self,
                          ckpt_path: str,
                          ignore_missing_ckpts: bool = False):
         path = os.path.join(ckpt_path, self.first_stage_model_path)
@@ -317,8 +317,8 @@ class GenerationBase(TrainBase, InferenceBase):
         else:
             raise FileNotFoundError("Checkpoint of first_stage_model file not found.")
 
-    
-    def load_cond_stage(self, 
+
+    def load_cond_stage(self,
                          ckpt_path: str,
                          ignore_missing_ckpts: bool = False):
         path = os.path.join(ckpt_path, self.cond_stage_model_path)
@@ -330,12 +330,12 @@ class GenerationBase(TrainBase, InferenceBase):
         else:
             raise FileNotFoundError("Checkpoint of cond_stage_model file not found.")
 
-    def load_cond_stage_2(self, 
+    def load_cond_stage_2(self,
                          ckpt_path: str,
                          ignore_missing_ckpts: bool = False):
         if self.cond_stage_2_model is None:
             return
-        
+
         path = os.path.join(ckpt_path, self.cond_stage_2_model_path)
         if os.path.exists(path):
             self.cond_stage_2_model = self.load_model(self.cond_stage_2_model, path)
@@ -344,7 +344,7 @@ class GenerationBase(TrainBase, InferenceBase):
             print_yellow("Checkpoint of cond_stage_2_model file not found. Ignoring.")
         else:
             raise FileNotFoundError("Checkpoint of cond_stage_2_model file not found.")
-    def load_denoiser(self, 
+    def load_denoiser(self,
                     ckpt_path: str = None,
                     denoiser_ckpt_path: str = None,
                     ignore_missing_ckpts: bool = False):
@@ -359,17 +359,17 @@ class GenerationBase(TrainBase, InferenceBase):
             print_yellow("Checkpoint of denoiser file not found. Ignoring.")
         else:
             raise FileNotFoundError("Checkpoint of denoiser file not found.")
-            
+
     def load_lora(self,
                 lora_ckpt_path: str = None,
                 ignore_missing_ckpts: bool = False):
         if not self.use_lora:
             return
-        
+
         lora_path = self.lora_path
         if lora_ckpt_path is not None:
             lora_path = lora_ckpt_path
-        
+
         if os.path.exists(lora_path):
             self.load_model(self.denoiser, lora_path, strict=False)
             print_green("Successfully loaded denoiser from checkpoint.")
@@ -377,7 +377,7 @@ class GenerationBase(TrainBase, InferenceBase):
             print_yellow("Checkpoint of denoiser file not found. Ignoring.")
         else:
             raise FileNotFoundError("Checkpoint of denoiser file not found.")
-        
+
     def from_pretrained(self,
                         ckpt_path: Optional[Union[str, Path]] = None,
                         denoiser_ckpt_path: Optional[Union[str, Path]] = None,
@@ -391,11 +391,11 @@ class GenerationBase(TrainBase, InferenceBase):
         self.load_cond_stage_2(ckpt_path, ignore_missing_ckpts)
         self.load_denoiser(ckpt_path, denoiser_ckpt_path, ignore_missing_ckpts)
         self.load_lora(lora_ckpt_path, ignore_missing_ckpts)
-    
+
     def enable_vram_management(self):
         logger.info("enable_vram_management: default moving to cuda")
         self.cuda()
-    
+
 
     def enable_cpu_offload(self):
         self.cpu_offload = True
@@ -439,7 +439,7 @@ class GenerationBase(TrainBase, InferenceBase):
                     model.to(device)
         # fresh the cuda cache
         torch.cuda.empty_cache()
-    
+
     @staticmethod
     def load_model(model: nn.Module, ckpt_path: Optional[Union[str, Path]] = None, strict=True):
         """
@@ -466,7 +466,7 @@ class GenerationBase(TrainBase, InferenceBase):
         else:
             raise FileNotFoundError("Checkpoint of model file not found.")
 
-    
+
     def init_trainer(self, train_config: DictConfig):
         # 1. basic info setup
         local_rank, global_rank, num_rank = get_dist_info()
@@ -485,7 +485,7 @@ class GenerationBase(TrainBase, InferenceBase):
         bs = train_config['data']['params']['batch_size']
         self.lr_config = OmegaConf.to_container(lr_config, resolve=True)
         self.configure_lr_config(self.lr_config, bs=bs, num_rank=num_rank)
-        
+
         # 3. dataset
         logger.info("***** Configuring Data *****")
         data = instantiate_from_config(train_config['data'])
