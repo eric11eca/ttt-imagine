@@ -1,0 +1,176 @@
+flow:
+  # E2E-TTT-enabled flow (sequential inference + TTT between clips)
+  target: videotuna.flow.wanvideo_e2e_ttt.WanVideoE2ETTTFlow
+  params:
+    task: "t2v-14B"
+    ckpt_path: "checkpoints/wan/Wan2.1-T2V-14B"
+    offload_model: true
+    ulysses_size: 1
+    ring_size: 1
+    t5_fsdp: false
+    t5_cpu: false
+    dit_fsdp: false
+    use_prompt_extend: false
+    prompt_extend_method: "local_qwen"
+    prompt_extend_model: null
+    prompt_extend_target_lang: "zh"
+    seed: 42
+
+    denoiser_config:
+      target: videotuna.models.wan.wan.modules.model.WanModel
+      use_from_pretrained: true
+      params:
+        pretrained_model_name_or_path: ${flow.params.ckpt_path}
+
+    first_stage_config:
+      target: videotuna.models.wan.wan.modules.vae.WanVAE_
+      params:
+        dim: 96
+        z_dim: 16
+        dim_mult: [1, 2, 4, 4]
+        num_res_blocks: 2
+        attn_scales: []
+        temperal_downsample: [false, true, true]
+        dropout: 0.0
+
+    cond_stage_config:
+      target: videotuna.models.wan.wan.modules.t5.T5Encoder
+      params:
+        dim: 4096
+        dim_attn: 4096
+        dim_ffn: 10240
+        num_heads: 64
+        num_buckets: 32
+        shared_pos: false
+        dropout: 0.1
+        vocab: 256384
+        num_layers: 24
+
+    # This is instantiated/applied by `GenerationBase.instantiate_lora()`.
+    lora_config:
+      target: peft.LoraConfig
+      params:
+        r: 64
+        lora_alpha: 64.0
+        init_lora_weights: true
+        target_modules: [q, k, v, o, ffn.0, ffn.2]
+
+train:
+  ckpt: checkpoints/wan/Wan2.1-T2V-14B
+  name: train_wan_t2v_e2e_ttt_lora
+  logdir: results/train
+  seed: 42
+  debug: false
+  first_stage_key: video
+  cond_stage_key: caption
+
+  # Keep flow/train paths consistent across the config.
+  mapping:
+    train.ckpt: flow.params.ckpt_path
+
+  # E2E-TTT knobs (consumed by the E2E-TTT flow once implemented).
+  e2e_ttt:
+    enabled: true
+    inner_loop:
+      num_gradient_steps: 1
+      batch_size: 4
+      num_mc_samples: 4
+      inner_lr_init: 5.0e-5
+      flow_shift: 5.0
+      logit_normal_mean: 0.0
+      logit_normal_std: 1.0
+      max_inner_grad_norm: 1.0
+    outer_loop:
+      outer_lr: 1.0e-5
+      outer_weight_decay: 0.01
+      truncate_steps: [0]
+
+  lr_config:
+    base_learning_rate: 1e-4
+    scale_lr: false
+
+  # Example dataset (toy) — replace with your real training CSV.
+  data:
+    target: videotuna.data.lightningdata.DataModuleFromConfig
+    params:
+      batch_size: 1
+      num_workers: 4
+      wrap: false
+      train:
+        target: videotuna.data.datasets.DatasetFromCSV
+        params:
+          csv_path: videotuna/data/anno_files/toy_video_dataset.csv
+          data_root: videotuna/data/toy_videos
+          height: 480
+          width: 832
+          num_frames: 81
+          frame_interval: 1
+          train: true
+
+  lightning:
+    strategy: deepspeed_stage_3_offload
+    trainer:
+      accelerator: gpu
+      benchmark: true
+      num_nodes: 1
+      accumulate_grad_batches: 1
+      max_epochs: 2000
+      precision: bf16-mixed
+    callbacks:
+      image_logger:
+        target: videotuna.utils.callbacks.ImageLogger
+        params:
+          batch_frequency: 50
+          max_images: 6
+          to_local: true
+          log_images_kwargs:
+            unconditional_guidance_scale: 12.0
+      model_checkpoint:
+        target: videotuna.utils.callbacks.VideoTunaModelCheckpoint
+        params:
+          filename: "{epoch:03}-{step:09}"
+          save_only_selected_model: true
+          selected_model: ["denoiser"]
+          save_weights_only: false
+          save_on_train_epoch_end: false
+          save_last: true
+          every_n_epochs: 0
+          every_n_train_steps: 50
+
+inference:
+  mode: t2v
+  ckpt_path: "checkpoints/wan/Wan2.1-T2V-14B"
+  savedir: results/t2v/wanvideo/e2e_ttt
+  seed: 42
+  height: 480
+  width: 832
+  image: null
+  prompt_file: inputs/t2v/prompts.txt
+  solver: "unipc"
+  num_inference_steps: 50
+  time_shift: 3.0
+  unconditional_guidance_scale: 5.0
+  frames: 81
+  n_samples_prompt: 1
+  bs: 1
+  savefps: 30
+  enable_model_cpu_offload: true
+
+  # E2E-TTT inference knobs (consumed by sequential inference once implemented).
+  e2e_ttt:
+    enabled: true
+    num_clips: 16
+    ttt_steps_per_clip: 1
+    num_mc_samples: 4
+    # Inner-loop update hyperparameters for test-time adaptation
+    inner_lr_init: 5.0e-5
+    max_inner_grad_norm: 1.0
+    flow_shift: 5.0
+    logit_normal_mean: 0.0
+    logit_normal_std: 1.0
+
+  mapping:
+    inference.ckpt_path: flow.params.ckpt_path
+    inference.seed: flow.params.seed
+    inference.enable_model_cpu_offload: flow.params.offload_model
+
