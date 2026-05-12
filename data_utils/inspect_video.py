@@ -8,12 +8,22 @@ Whole directory (one row per video):
 
 Recursive scan + aggregated summary (uniq resolutions, fps, frame counts):
     python -m data_utils.inspect_video path/to/dataset/ --recursive --summary
+
+Save per-video rows to CSV or JSON (format inferred from extension):
+    python -m data_utils.inspect_video path/to/videos/ --output rows.csv
+    python -m data_utils.inspect_video path/to/videos/ --output rows.json
+
+Save aggregated summary to JSON:
+    python -m data_utils.inspect_video path/to/dataset/ --recursive --summary \\
+        --output summary.json
 """
 
 import argparse
+import csv
+import json
 import os
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, fields
 from os import path as osp
 from typing import List, Optional
 
@@ -148,6 +158,91 @@ def print_summary(metas: List[VideoMetadata]) -> None:
             print(f"    {m.path}: {m.error}")
 
 
+def build_summary(metas: List[VideoMetadata]) -> dict:
+    """Same aggregates as `print_summary`, returned as a JSON-friendly dict."""
+    ok = [m for m in metas if m.error is None]
+    bad = [m for m in metas if m.error is not None]
+
+    summary: dict = {
+        "total": len(metas),
+        "ok": len(ok),
+        "failed": len(bad),
+    }
+    if not ok:
+        summary["failed_files"] = [{"path": m.path, "error": m.error} for m in bad]
+        return summary
+
+    def _dist(counter: Counter) -> list:
+        # Counter keys may be tuples (e.g. resolution); JSON needs strings or
+        # nested objects, so we emit a list of {"value": ..., "count": ...}.
+        return [{"value": list(v) if isinstance(v, tuple) else v, "count": c}
+                for v, c in counter.most_common()]
+
+    summary["distributions"] = {
+        "resolution_wh": _dist(Counter((m.width, m.height) for m in ok)),
+        "fps":           _dist(Counter(round(m.fps, 3) for m in ok)),
+        "num_frames":    _dist(Counter(m.num_frames for m in ok)),
+        "codec":         _dist(Counter(m.codec for m in ok)),
+    }
+
+    durations = [m.duration_sec for m in ok]
+    sizes_mb = [m.file_size_mb for m in ok]
+    summary["duration_sec"] = {
+        "min": min(durations),
+        "max": max(durations),
+        "mean": sum(durations) / len(durations),
+    }
+    summary["file_size_mb"] = {
+        "min": min(sizes_mb),
+        "max": max(sizes_mb),
+        "total": sum(sizes_mb),
+    }
+    if bad:
+        summary["failed_files"] = [{"path": m.path, "error": m.error} for m in bad]
+    return summary
+
+
+def write_rows_csv(metas: List[VideoMetadata], output_path: str) -> None:
+    """One row per video. Columns are the dataclass fields, in declaration order."""
+    column_names = [f.name for f in fields(VideoMetadata)]
+    with open(output_path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=column_names)
+        writer.writeheader()
+        for m in metas:
+            writer.writerow(asdict(m))
+
+
+def write_rows_json(metas: List[VideoMetadata], output_path: str) -> None:
+    with open(output_path, "w", encoding="utf-8") as fh:
+        json.dump([asdict(m) for m in metas], fh, indent=2)
+
+
+def write_summary_json(metas: List[VideoMetadata], output_path: str) -> None:
+    with open(output_path, "w", encoding="utf-8") as fh:
+        json.dump(build_summary(metas), fh, indent=2)
+
+
+def save_output(metas: List[VideoMetadata], output_path: str, summary: bool) -> None:
+    """Dispatch to the right writer based on extension and --summary mode."""
+    ext = osp.splitext(output_path)[1].lower()
+    if summary:
+        if ext != ".json":
+            raise ValueError(
+                f"--summary output must be a .json file (got '{ext}'); "
+                "summary aggregates are nested and don't flatten into CSV."
+            )
+        write_summary_json(metas, output_path)
+    elif ext == ".csv":
+        write_rows_csv(metas, output_path)
+    elif ext == ".json":
+        write_rows_json(metas, output_path)
+    else:
+        raise ValueError(
+            f"--output extension must be .csv or .json (got '{ext}')."
+        )
+    print(f"\nSaved to {output_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("path", type=str, help="Video file or directory")
@@ -160,6 +255,9 @@ def main():
                              "(slow; default uses duration * fps)")
     parser.add_argument("--ext", type=str, default=".mp4",
                         help="File extension to match when scanning a directory")
+    parser.add_argument("--output", type=str, default=None,
+                        help="Write results to this file. Format inferred from "
+                             "extension: .csv (rows only) or .json (rows or summary).")
     args = parser.parse_args()
 
     videos = collect_videos(args.path, recursive=args.recursive, ext=args.ext)
@@ -180,6 +278,9 @@ def main():
         print("  " + "-" * (len(header) - 2))
         for m in metas:
             print(format_row(m))
+
+    if args.output:
+        save_output(metas, args.output, summary=args.summary)
 
 
 if __name__ == "__main__":
