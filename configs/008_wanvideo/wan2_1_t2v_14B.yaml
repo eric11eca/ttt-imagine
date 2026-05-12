@@ -2,7 +2,7 @@ flow:
   target: videotuna.flow.wanvideo.WanVideoModelFlow
   params:
     task: "t2v-14B"                   # The task to run (choices from WAN_CONFIGS.keys())
-    ckpt_path: "checkpoints/wan/Wan2.1-T2V-14B"                    # The path to the checkpoint directory.
+    ckpt_path: "/work/nlp/hzhao/ttt-imagine/checkpoints/wan/Wan2.1-T2V-14B"                    # The path to the checkpoint directory.
     offload_model: true               # Whether to offload the model to CPU after each model forward.
     ulysses_size: 1                   # The size of the ulysses parallelism in DiT.
     ring_size: 1                      # The size of the ring attention parallelism in DiT.
@@ -50,7 +50,7 @@ flow:
 
 inference:
   mode: t2v
-  ckpt_path: "checkpoints/wan/Wan2.1-T2V-14B"
+  ckpt_path: "/work/nlp/hzhao/ttt-imagine/checkpoints/wan/Wan2.1-T2V-14B"
   savedir: results/t2v/wanvideo
   seed: 42
   height: 480
